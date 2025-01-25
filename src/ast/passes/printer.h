@@ -7,15 +7,13 @@
 namespace bpftrace {
 namespace ast {
 
-class Printer : public Visitor
-{
+class Printer : public Visitor {
 public:
-  explicit Printer(std::ostream &out, bool print_types = false)
-      : out_(out), print_types(print_types)
+  explicit Printer(ASTContext &ctx, std::ostream &out) : Visitor(ctx), out_(out)
   {
   }
 
-  void print(Node *root);
+  void print(Node *node);
 
   void visit(Integer &integer) override;
   void visit(PositionalParameter &param) override;
@@ -38,20 +36,25 @@ public:
   void visit(ExprStatement &expr) override;
   void visit(AssignMapStatement &assignment) override;
   void visit(AssignVarStatement &assignment) override;
-  void visit(If &if_block) override;
+  void visit(AssignConfigVarStatement &assignment) override;
+  void visit(VarDeclStatement &decl) override;
+  void visit(If &if_node) override;
   void visit(Unroll &unroll) override;
   void visit(While &while_block) override;
+  void visit(For &for_loop) override;
+  void visit(Config &config) override;
+  void visit(Block &block) override;
   void visit(Jump &jump) override;
   void visit(Predicate &pred) override;
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
+  void visit(Subprog &subprog) override;
   void visit(Program &program) override;
 
-  int depth_ = 0;
+  int depth_ = -1;
 
 private:
   std::ostream &out_;
-  bool print_types = false;
 
   std::string type(const SizedType &ty);
 };

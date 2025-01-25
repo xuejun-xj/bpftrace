@@ -1,4 +1,11 @@
 #!/bin/bash
+#
+# This script creates builds the official release artifacts.
+#
+# Usage examples:
+#         ./scripts/create-assets.sh
+#         OUT=../out-dir ./scripts/create-assets.sh
+#
 
 ZSTDFLAGS="-19"
 
@@ -15,7 +22,8 @@ function info() {
 command -v zstd >/dev/null 2>&1 || err "zstd command not found, required for release"
 command -v asciidoctor >/dev/null 2>&1 || err "asciidoctor not found, required for manpage"
 
-OUT=$(mktemp -d) || err "Failed to create temp dir"
+# Take value from environment if set, otherwise use a tempdir
+: ${OUT:=$(mktemp -d)} || err "Failed to create temp dir"
 TMP="${OUT}/tmp"
 
 echo "Using '$OUT' as assert dir"
@@ -39,8 +47,8 @@ tar --xz -cf "$OUT/tools.tar.xz" -C "$TMP/bin" "."
 info "Creating man archive"
 mkdir -p "$TMP/share/man/man8"
 cp man/man8/*.8 "$TMP/share//man/man8/"
-gzip "$TMP/share/man/man8/"*
-asciidoctor man/adoc/bpftrace.adoc  -b manpage -o - | gzip - > "$TMP/share/man/man8/bpftrace.8.gz"
+gzip -n "$TMP/share/man/man8/"*
+asciidoctor man/adoc/bpftrace.adoc  -b manpage -o - | gzip -n - > "$TMP/share/man/man8/bpftrace.8.gz"
 tar --xz -cf "$OUT/man.tar.xz" -C "$TMP/share" man
 
 info "Building bpftrace appimage"

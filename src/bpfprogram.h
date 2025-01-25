@@ -1,48 +1,40 @@
 #pragma once
 
-#include "mapmanager.h"
+#include "bpffeature.h"
+#include "btf.h"
+#include "config.h"
+#include "types.h"
 
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <tuple>
-#include <unordered_map>
-#include <vector>
+#include <bpf/libbpf.h>
 
 namespace bpftrace {
 
-using BpfBytecode = std::unordered_map<std::string, std::vector<uint8_t>>;
-
+class BpfBytecode;
 class BPFtrace;
 
-class BpfProgram
-{
+// This class abstracts a single BPF program by encapsulating libbpf's
+// 'struct bpf_prog'.
+class BpfProgram {
 public:
-  static std::optional<BpfProgram> CreateFromBytecode(
-      const BpfBytecode &bytecode,
-      const std::string &name,
-      MapManager &maps);
+  explicit BpfProgram(struct bpf_program *bpf_prog);
 
-  void assemble();
+  void set_prog_type(const Probe &probe);
+  void set_expected_attach_type(const Probe &probe, BPFfeature &feature);
+  void set_attach_target(const Probe &probe,
+                         const BTF &btf,
+                         const Config &config);
+  void set_no_autoattach();
 
-  const std::vector<uint8_t> &getCode();
+  int fd() const;
+  struct bpf_program *bpf_prog() const;
 
   BpfProgram(const BpfProgram &) = delete;
   BpfProgram &operator=(const BpfProgram &) = delete;
   BpfProgram(BpfProgram &&) = default;
-  BpfProgram &operator=(BpfProgram &&) = delete;
+  BpfProgram &operator=(BpfProgram &&) = default;
 
 private:
-  explicit BpfProgram(const BpfBytecode &bytecode,
-                      const std::string &name,
-                      MapManager &bpftrace);
-
-  void relocateMaps();
-
-  const BpfBytecode &bytecode_;
-  MapManager &maps_;
-  std::string name_;
-  std::vector<uint8_t> code_;
+  struct bpf_program *bpf_prog_;
 };
 
 } // namespace bpftrace

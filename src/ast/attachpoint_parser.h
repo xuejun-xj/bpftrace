@@ -11,10 +11,9 @@
 namespace bpftrace {
 namespace ast {
 
-class AttachPointParser
-{
+class AttachPointParser {
 public:
-  AttachPointParser(Program *root,
+  AttachPointParser(ASTContext &ctx,
                     BPFtrace &bpftrace,
                     std::ostream &sink,
                     bool listing);
@@ -22,13 +21,7 @@ public:
   int parse();
 
 private:
-  enum State
-  {
-    OK = 0,
-    INVALID,
-    NEW_APS,
-    SKIP
-  };
+  enum State { OK = 0, INVALID, NEW_APS, SKIP };
 
   State parse_attachpoint(AttachPoint &ap);
   /*
@@ -57,7 +50,7 @@ private:
   State software_parser();
   State hardware_parser();
   State watchpoint_parser(bool async = false);
-  State kfunc_parser();
+  State fentry_parser();
   State iter_parser();
   State raw_tracepoint_parser();
 
@@ -66,7 +59,7 @@ private:
   std::optional<uint64_t> stoull(const std::string &str);
   std::optional<int64_t> stoll(const std::string &str);
 
-  Program *root_{ nullptr }; // Non-owning pointer
+  ASTContext &ctx_;
   BPFtrace &bpftrace_;
   std::ostream &sink_;
   AttachPoint *ap_{ nullptr }; // Non-owning pointer
