@@ -35,30 +35,6 @@ want to consider using the Nix build. Or manually building and installing
 
 The distro build is documented in [INSTALL.md](../INSTALL.md#generic-build-process).
 
-### Vagrant build
-
-We also provide tentative support for building and testing using Vagrant. The boxes
-we define in our [`Vagrantfile`](../Vagrantfile) should contain all the necessary
-dependencies to build and run bpftrace. Please be aware we do not have _too_ many
-folks using the vagrant workflow, so it may be a little out of date.
-
-This is useful if the host you're developing on does not run linux.
-
-Make sure you have the `vbguest` plugin installed - it is required to correctly
-install the shared file system driver on the ubuntu boxes:
-
-```
-$ vagrant plugin install vagrant-vbguest
-```
-
-Start VM:
-
-```
-$ vagrant status
-$ vagrant up $YOUR_CHOICE
-$ vagrant ssh $YOUR_CHOICE
-```
-
 ## [Tests](../tests/README.md)
 
 Every contribution should (1) not break the existing tests and (2) introduce new
@@ -104,15 +80,24 @@ $ NIX_TARGET=.#bpftrace-llvm11  \
 Some tests are known to be flaky and sometimes fail in the CI environment. The
 list of known such tests:
 - runtime test `usdt.usdt probes - file based semaphore activation multi
-  process` ([#2410](https://github.com/iovisor/bpftrace/issues/2402))
+  process` ([#2410](https://github.com/bpftrace/bpftrace/issues/2402))
 
 What usually helps, is restarting the CI. This is simple on your own fork but
 requires one of the maintainers for pull requests.
 
+## Coding guidelines
+
+This is not about the formatting of the source code (we have `clang-format`
+for that). Rather, it's about the semantics of the code and what language
+features we try to use / avoid.
+
+Please see [coding_guidelines.md](./coding_guidelines.md) for a full treatment
+on the topic.
+
 ## Code style
 
 We use clang-format with our custom config for formatting code. This was
-[introduced](https://github.com/iovisor/bpftrace/pull/639) after a lot of code
+[introduced](https://github.com/bpftrace/bpftrace/pull/639) after a lot of code
 was already written. Instead of formatting the whole code base at once and
 breaking `git blame` we're taking an incremental approach, each new/modified bit
 of code needs to be formatted.
@@ -127,6 +112,16 @@ can be used to easily format commits, e.g. `git clang-format upstream/master`
 
 We want to avoid `fix formatting` commits. Instead every commit should be
 formatted correctly.
+
+## Merging pull requests
+
+Please squash + rebase all pull requests (with no merge commit). In other words,
+there should be one commit in master per pull request. This makes generating
+changelogs both trivial and precise with the least amount of noise.
+
+The exception to this is PRs with complicated changes. If this is the case and
+the commits are well structured, a rebase + merge (no merge commit) is acceptable.
+The rule of thumb is the commit titles should make sense in a changelog.
 
 ## Changelog
 

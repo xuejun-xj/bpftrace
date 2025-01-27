@@ -38,11 +38,13 @@ NIX_TARGET = os.environ.get("NIX_TARGET", "")
 CMAKE_BUILD_TYPE = os.environ.get("CMAKE_BUILD_TYPE", "Release")
 RUN_TESTS = os.environ.get("RUN_TESTS", "1")
 RUN_MEMLEAK_TEST = os.environ.get("RUN_MEMLEAK_TEST", "0")
+RUN_AOT_TESTS = os.environ.get("RUN_AOT_TESTS", "0")
 CC = os.environ.get("CC", "cc")
 CXX = os.environ.get("CXX", "c++")
-RUNTIME_TEST_DISABLE = os.environ.get("RUNTIME_TEST_DISABLE", "")
+CI = os.environ.get("CI", "false")
 TOOLS_TEST_OLDVERSION = os.environ.get("TOOLS_TEST_OLDVERSION", "")
 TOOLS_TEST_DISABLE = os.environ.get("TOOLS_TEST_DISABLE", "")
+AOT_SKIPLIST_FILE = os.environ.get("AOT_SKIPLIST_FILE", "")
 
 
 class TestStatus(Enum):
@@ -122,13 +124,18 @@ def shell(
             # play nice with root or writing temporary files. So that
             # requires further investigation.
             "--preserve-env=PATH",
+            "--preserve-env=PYTHONPATH",
             # Also preserve any caller specified env vars
             f"--preserve-env={to_preserve}",
         ]
     c += cmd
 
-    # Ugly workaround for mypy not being able to infer empty dict
-    empty: Dict[str, str] = {}
+    if not env:
+        env = {}
+
+    # Nix needs to know the home dir
+    if "HOME" in os.environ:
+        env["HOME"] = os.environ["HOME"]
 
     subprocess.run(
         c,
@@ -138,7 +145,7 @@ def shell(
         # inside the nix environment cannot accidentally depend on
         # host environment. There are known very-hard-to-debug issues
         # that occur in CI when the envirionment escapes.
-        env=env if env else empty,
+        env=env,
     )
 
 
@@ -160,7 +167,6 @@ def configure():
         f"-DCMAKE_VERBOSE_MAKEFILE=1",
         f"-DBUILD_TESTING=1",
         f"-DENABLE_SKB_OUTPUT=1",
-        f"-DALLOW_UNSAFE_PROBE=0",
     ]
     # fmt: on
 
@@ -229,7 +235,11 @@ def test():
         test_one(
             "bpftrace_test",
             lambda: truthy(RUN_TESTS),
-            lambda: shell(["./tests/bpftrace_test"], cwd=Path(BUILD_DIR)),
+            lambda: shell(
+                ["./tests/bpftrace_test"],
+                cwd=Path(BUILD_DIR),
+                env={"GTEST_COLOR": "yes"},
+            ),
         )
     )
     results.append(
@@ -240,7 +250,10 @@ def test():
                 ["./tests/runtime-tests.sh"],
                 as_root=True,
                 cwd=Path(BUILD_DIR),
-                env={"RUNTIME_TEST_DISABLE": RUNTIME_TEST_DISABLE},
+                env={
+                    "CI": CI,
+                    "RUNTIME_TEST_COLOR": "yes",
+                },
             ),
         )
     )
@@ -257,6 +270,34 @@ def test():
                 env={
                     "TOOLS_TEST_OLDVERSION": TOOLS_TEST_OLDVERSION,
                     "TOOLS_TEST_DISABLE": TOOLS_TEST_DISABLE,
+                },
+            ),
+        )
+    )
+    results.append(
+        test_one(
+            "runtime-tests.sh (AOT)",
+            lambda: truthy(RUN_AOT_TESTS),
+            lambda: shell(
+                (
+                    [
+                        "./tests/runtime-tests.sh",
+                        "--run-aot-tests",
+                        "--filter",
+                        "aot.*",
+                    ]
+                    + [
+                        "--skiplist_file",
+                        f"{root()}/{AOT_SKIPLIST_FILE}",
+                    ]
+                    if AOT_SKIPLIST_FILE
+                    else []
+                ),
+                as_root=True,
+                cwd=Path(BUILD_DIR),
+                env={
+                    "CI": CI,
+                    "RUNTIME_TEST_COLOR": "yes",
                 },
             ),
         )

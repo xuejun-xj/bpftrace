@@ -1,14 +1,18 @@
 {
-  description = "High-level tracing language for Linux eBPF";
+  description = "High-level tracing language for Linux";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/release-22.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/release-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     nix-appimage = {
-      # Use fork until following PRs are in:
-      #   https://github.com/ralismark/nix-appimage/pull/8
+      # We're maintaining a fork b/c upstream is missing support for 24.11
+      # and has also dropped the following feature we depend on:
       #   https://github.com/ralismark/nix-appimage/pull/9
-      url = "github:danobi/nix-appimage/83c61d93ee96d4d530f5382edca51ee30ce2769f";
+      #
+      # Also b/c appimage-runtime (which nix-appimage depends on) has a bug
+      # that's being fixed in:
+      #   https://github.com/AppImageCrafters/appimage-runtime/pull/14
+      url = "github:danobi/nix-appimage/74e44691812b4f220e84fd89895931ff4f904a03";
       # Avoid multiple copies of the same dependency
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
@@ -21,29 +25,32 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ]
       (system:
         let
+          # The default LLVM version is the latest supported release
+          defaultLlvmVersion = 19;
+
           # Overlay to specify build should use the specific libbpf we want
+          libbpfVersion = "1.5.0";
           libbpfOverlay =
             (self: super: {
-              libbpf_1 = super.libbpf_1.overrideAttrs (old: {
-                # 1.3 is the next release as of (11/11/23)
-                version = "1.3.0";
+              libbpf = super.libbpf.overrideAttrs (old: {
+                version = libbpfVersion;
                 src = super.fetchFromGitHub {
                   owner = "libbpf";
                   repo = "libbpf";
-                  rev = "3189f70538b50fe3d2fd63f77351991a224e435b";
+                  rev = "v${libbpfVersion}";
                   # If you don't know the hash the first time, set:
                   # hash = "";
                   # then nix will fail the build with such an error message:
                   # hash mismatch in fixed-output derivation '/nix/store/m1ga09c0z1a6n7rj8ky3s31dpgalsn0n-source':
                   # specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
                   # got:    sha256-173gxk0ymiw94glyjzjizp8bv8g72gwkjhacigd1an09jshdrjb4
-                  sha256 = "sha256-nh1xs4jT/YCBq6uT4WbSJc6/BfMg1Ussd11aY1Nmlq4=";
+                  sha256 = "sha256-+L/rbp0a3p4PHq1yTJmuMcNj0gT5sqAPeaNRo3Sh6U8=";
                 };
               });
             });
 
           # Overlay to specify build should use the specific bcc we want
-          bccVersion = "0.27.0";
+          bccVersion = "0.33.0";
           bccOverlay =
             (self: super: {
               bcc = super.bcc.overridePythonAttrs (old: {
@@ -52,7 +59,7 @@
                   owner = "iovisor";
                   repo = "bcc";
                   rev = "v${bccVersion}";
-                  sha256 = "sha256-+RK5RZcoNHlgMOFPgygRf2h+OZGxR9gJ+fTbYjDB6Ww=";
+                  sha256 = "sha256-6dT3seLuEVQNKWiYGLK1ajXzW7pb62S/GQ0Lp4JdGjc=";
                 };
                 # Seems like these extra tools are needed to build bcc
                 nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.python310Packages.setuptools pkgs.zip ];
@@ -60,44 +67,50 @@
             });
 
           # We need to use two overlays so that bcc inherits the our pinned libbpf
-          pkgs = import nixpkgs { inherit system; overlays = [ libbpfOverlay bccOverlay ]; };
+          overlayedPkgs = import nixpkgs { inherit system; overlays = [ libbpfOverlay bccOverlay ]; };
 
-          # Define lambda that returns a derivation for bpftrace given llvm package as input
+          pkgs = import nixpkgs { inherit system; };
+
+          # Define lambda that returns a derivation for bpftrace given llvm version as input
           mkBpftrace =
-            llvmPackages:
+            llvmVersion:
               with pkgs;
               pkgs.stdenv.mkDerivation rec {
                 name = "bpftrace";
 
                 src = self;
 
-                nativeBuildInputs = [ cmake ninja bison flex gcc12 clang ];
+                nativeBuildInputs = [ cmake ninja bison flex gcc clang ];
 
-                buildInputs = with llvmPackages;
-                  [
-                    asciidoctor
-                    bcc
-                    cereal
-                    elfutils
-                    gtest
-                    libbpf_1
-                    libbfd
-                    libclang
-                    libelf
-                    libffi
-                    libopcodes
-                    libpcap
-                    libsystemtap
-                    llvm
-                    pahole
-                    xxd
-                    zlib
-                  ];
+                buildInputs = [
+                  asciidoctor
+                  cereal
+                  elfutils
+                  gtest
+                  libbfd
+                  libelf
+                  libffi
+                  libopcodes
+                  libpcap
+                  libsystemtap
+                  pkgs."llvmPackages_${toString llvmVersion}".libclang
+                  pkgs."llvmPackages_${toString llvmVersion}".lldb
+                  pkgs."llvmPackages_${toString llvmVersion}".llvm
+                  overlayedPkgs.bcc
+                  overlayedPkgs.libbpf
+                  pahole
+                  xxd
+                  zlib
+                ];
 
                 # Release flags
                 cmakeFlags = [
                   "-DCMAKE_BUILD_TYPE=Release"
                 ];
+
+                # Technically not needed cuz package name matches mainProgram, but
+                # explicit is fine too.
+                meta.mainProgram = "bpftrace";
               };
 
           # Define lambda that returns a devShell derivation with extra test-required packages
@@ -106,17 +119,36 @@
             pkg:
               with pkgs;
               pkgs.mkShell {
-                buildInputs = pkg.nativeBuildInputs ++ pkg.buildInputs ++ [
+                buildInputs = [
+                  bc
                   binutils
+                  bpftools
                   coreutils
-                  findutils
+                  # Needed for the nix-aware "wrapped" clang-tidy
+                  clang-tools
                   gawk
+                  git
                   gnugrep
+                  iproute2
+                  kmod
+                  # For git-clang-format
+                  libclang.python
+                  nftables
                   procps
                   python3
+                  python3Packages.looseversion
                   strace
+                  unixtools.ping
                   util-linux
-                ];
+                  # For runtime tests
+                  rustc
+                  go
+                ] ++ pkg.nativeBuildInputs ++ pkg.buildInputs;
+
+                # Some hardening features (like _FORTIFY_SOURCE) requires building with
+                # optimizations on. That's fine for actual flake build, but for most of the
+                # dev builds we do in nix shell, it just causes warning spew.
+                hardeningDisable = [ "all" ];
               };
         in
         {
@@ -125,17 +157,15 @@
 
           # Define package set
           packages = rec {
-            # Default package is latest supported LLVM release
-            default = bpftrace-llvm16;
+            default = self.packages.${system}."bpftrace-llvm${toString defaultLlvmVersion}";
 
             # Support matrix of llvm versions
-            bpftrace-llvm16 = mkBpftrace pkgs.llvmPackages_16;
-            bpftrace-llvm15 = mkBpftrace pkgs.llvmPackages_15;
-            bpftrace-llvm14 = mkBpftrace pkgs.llvmPackages_14;
-            bpftrace-llvm13 = mkBpftrace pkgs.llvmPackages_13;
-            bpftrace-llvm12 = mkBpftrace pkgs.llvmPackages_12;
-            bpftrace-llvm11 = mkBpftrace pkgs.llvmPackages_11;
-            bpftrace-llvm10 = mkBpftrace pkgs.llvmPackages_10;
+            bpftrace-llvm19 = mkBpftrace 19;
+            bpftrace-llvm18 = mkBpftrace 18;
+            bpftrace-llvm17 = mkBpftrace 17;
+            bpftrace-llvm16 = mkBpftrace 16;
+            bpftrace-llvm15 = mkBpftrace 15;
+            bpftrace-llvm14 = mkBpftrace 14;
 
             # Self-contained static binary with all dependencies
             appimage = nix-appimage.mkappimage.${system} {
@@ -146,7 +176,9 @@
               # Exclude the following groups to reduce appimage size:
               #
               # *.a: Static archives are not necessary at runtime
-              # *.pyc, *.py, *.whl: bpftrace does not use python at runtime
+              # *.h: Header files are not necessary at runtime (some ARM headers for clang are large)
+              # *.pyc, *.whl: bpftrace does not use python at runtime (with exception
+              #               of stdlib for unfortunate lldb python bindings)
               # libLLVM-11.so: Appimage uses the latest llvm we support, so not llvm11
               #
               # The basic process to identify large and useless files is to:
@@ -159,8 +191,8 @@
               # ```
               exclude = [
                 "... *.a"
+                "... *.h"
                 "... *.pyc"
-                "... *.py"
                 "... *.whl"
                 "... libLLVM-11.so"
               ];
@@ -174,15 +206,14 @@
           };
 
           devShells = rec {
-            default = bpftrace-llvm16;
+            default = self.devShells.${system}."bpftrace-llvm${toString defaultLlvmVersion}";
 
+            bpftrace-llvm19 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm19;
+            bpftrace-llvm18 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm18;
+            bpftrace-llvm17 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm17;
             bpftrace-llvm16 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm16;
             bpftrace-llvm15 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm15;
             bpftrace-llvm14 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm14;
-            bpftrace-llvm13 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm13;
-            bpftrace-llvm12 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm12;
-            bpftrace-llvm11 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm11;
-            bpftrace-llvm10 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm10;
           };
         });
 }

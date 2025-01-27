@@ -1,5 +1,5 @@
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include <csignal>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -7,27 +7,17 @@
 #include <system_error>
 
 #include <fcntl.h>
-#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 #include "child.h"
 #include "childhelper.h"
 #include "utils.h"
 
-#if __has_include(<filesystem>)
-#include <filesystem>
-namespace std_filesystem = std::filesystem;
-#elif __has_include(<experimental/filesystem>)
-#include <experimental/filesystem>
-namespace std_filesystem = std::experimental::filesystem;
-#else
-#error "neither <filesystem> nor <experimental/filesystem> are present"
-#endif
-
-namespace bpftrace {
-namespace test {
-namespace child {
+namespace bpftrace::test::child {
 
 using ::testing::HasSubstr;
 
@@ -37,13 +27,10 @@ using ::testing::HasSubstr;
 
 TEST(childproc, exe_does_not_exist)
 {
-  try
-  {
+  try {
     ChildProc child("/does/not/exist/abc/fed");
     FAIL();
-  }
-  catch (const std::runtime_error &e)
-  {
+  } catch (const std::runtime_error &e) {
     EXPECT_THAT(e.what(), HasSubstr("does not exist or is not executable"));
   }
 }
@@ -55,13 +42,10 @@ TEST(childproc, too_many_arguments)
   for (int i = 0; i < 280; i++)
     cmd << " a";
 
-  try
-  {
+  try {
     ChildProc child(cmd.str());
     FAIL();
-  }
-  catch (const std::runtime_error &e)
-  {
+  } catch (const std::runtime_error &e) {
     EXPECT_THAT(e.what(), HasSubstr("Too many arguments"));
   }
 }
@@ -226,14 +210,14 @@ TEST(childproc, multi_exec_match)
   ASSERT_NE(::mkdtemp(&tmpdir[0]), nullptr);
 
   // Create fixture directories
-  const auto path = std_filesystem::path(tmpdir);
+  const auto path = std::filesystem::path(tmpdir);
   const auto usr_bin = path / "usr" / "bin";
-  ASSERT_TRUE(std_filesystem::create_directories(usr_bin, ec));
+  ASSERT_TRUE(std::filesystem::create_directories(usr_bin, ec));
   ASSERT_FALSE(ec);
 
   // Create symbolic link: bin -> usr/bin
   const auto symlink_bin = path / "bin";
-  std_filesystem::create_directory_symlink(usr_bin, symlink_bin, ec);
+  std::filesystem::create_directory_symlink(usr_bin, symlink_bin, ec);
   ASSERT_FALSE(ec);
 
   // Copy a 'mysleep' binary and add x permission
@@ -270,9 +254,7 @@ TEST(childproc, multi_exec_match)
 
   // Cleanup
   EXPECT_EQ(::setenv("PATH", old_path, 1), 0);
-  EXPECT_GT(std_filesystem::remove_all(tmpdir), 0);
+  EXPECT_GT(std::filesystem::remove_all(tmpdir), 0);
 }
 
-} // namespace child
-} // namespace test
-} // namespace bpftrace
+} // namespace bpftrace::test::child

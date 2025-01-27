@@ -14,10 +14,9 @@ namespace ast {
 //
 // Over time, we expect to relax these restrictions as AOT supports more
 // features.
-class PortabilityAnalyser : public Visitor
-{
+class PortabilityAnalyser : public Visitor {
 public:
-  PortabilityAnalyser(Node *root, std::ostream &out = std::cerr);
+  PortabilityAnalyser(ASTContext &ctx, std::ostream &out = std::cerr);
   int analyse();
 
 private:
@@ -27,7 +26,7 @@ private:
   void visit(Cast &cast) override;
   void visit(AttachPoint &ap) override;
 
-  Node *root_;
+private:
   std::ostream &out_;
   std::ostringstream err_;
 };
