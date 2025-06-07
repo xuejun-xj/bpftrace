@@ -91,9 +91,15 @@ and this project adheres to
   - [#4139](https://github.com/bpftrace/bpftrace/pull/4139)
 - Fix incorrect reporting of attached count for multi probes
   - [#4194](https://github.com/bpftrace/bpftrace/pull/4194)
+- Attach watchpoint probes to newly created threads
+  - [#4239](https://github.com/bpftrace/bpftrace/pull/4239)
+- Fix reading of __data_loc tracepoint arguments
+  - [#4238](https://github.com/bpftrace/bpftrace/pull/4238)
 #### Security
 #### Docs
 #### Tools
+- killsnoop.bt: display signal name instead of value
+  - [#4234](https://github.com/bpftrace/bpftrace/pull/4234)
 - killsnoop.bt: support tkill() and tgkill()
   - [#4190](https://github.com/bpftrace/bpftrace/pull/4190)
 - Remove tools example usage txt files and move info to comments
