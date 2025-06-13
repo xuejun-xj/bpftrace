@@ -45,7 +45,6 @@ add_dependencies(runtime parser)
 
 add_library(libbpftrace STATIC
   build_info.cpp
-  clang_parser.cpp
   driver.cpp
   lockdown.cpp
   tracepoint_format_parser.cpp
@@ -69,11 +68,6 @@ target_compile_definitions(bpftrace PRIVATE ${BPFTRACE_FLAGS})
 target_link_libraries(bpftrace libbpftrace)
 
 # compile definitions
-
-if (NOT SYSTEM_INCLUDE_PATHS EQUAL "auto")
-  MESSAGE(STATUS "Using SYSTEM_INCLUDE_PATHS=${SYSTEM_INCLUDE_PATHS}")
-endif()
-target_compile_definitions(runtime PUBLIC SYSTEM_INCLUDE_PATHS="${SYSTEM_INCLUDE_PATHS}")
 
 # This is run on every build to ensure the version string is always up-to-date
 add_custom_target(version_h
@@ -102,7 +96,7 @@ endif(STATIC_LINKING)
 
 target_link_libraries(runtime debugfs tracefs util)
 target_link_libraries(runtime ${LIBBPF_LIBRARIES} ${ZLIB_LIBRARIES})
-target_link_libraries(libbpftrace parser resources runtime aot ast arch util cxxdemangler_llvm)
+target_link_libraries(libbpftrace parser runtime aot ast arch util cxxdemangler_llvm)
 
 if(LIBPCAP_FOUND)
   target_link_libraries(libbpftrace ${LIBPCAP_LIBRARIES})
@@ -225,7 +219,6 @@ add_subdirectory(arch)
 add_subdirectory(ast)
 add_subdirectory(cxxdemangler)
 add_subdirectory(debugfs)
-add_subdirectory(resources)
 add_subdirectory(stdlib)
 add_subdirectory(tracefs)
 add_subdirectory(util)

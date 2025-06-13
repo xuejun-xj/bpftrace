@@ -8,6 +8,7 @@
 #include "bpftrace.h"
 #include "globalvars.h"
 #include "log.h"
+#include "types.h"
 #include "util/exceptions.h"
 #include <filesystem>
 #include <llvm/IR/DataLayout.h>
@@ -74,10 +75,10 @@ libbpf::bpf_func_id IRBuilderBPF::selectProbeReadHelper(AddrSpace as, bool str)
 // It represents the inode of the initial (global) PID namespace
 constexpr uint32_t PROC_PID_INIT_INO = 0xeffffffc;
 
-Value *IRBuilderBPF::CreateGetPid(const Location &loc)
+Value *IRBuilderBPF::CreateGetPid(const Location &loc, bool force_init)
 {
   const auto &pidns = bpftrace_.get_pidns_self_stat();
-  if (pidns && pidns->st_ino != PROC_PID_INIT_INO) {
+  if (!force_init && pidns && pidns->st_ino != PROC_PID_INIT_INO) {
     // Get namespaced target PID when we're running in a namespace
     AllocaInst *res = CreateAllocaBPF(BpfPidnsInfoType(), "bpf_pidns_info");
     CreateGetNsPidTgid(
@@ -89,16 +90,16 @@ Value *IRBuilderBPF::CreateGetPid(const Location &loc)
     return pid;
   }
 
-  // Get global target PID when we're in the initial namespace
+  // Get global target PID otherwise
   Value *pidtgid = CreateGetPidTgid(loc);
   Value *pid = CreateTrunc(CreateLShr(pidtgid, 32), getInt32Ty(), "pid");
   return pid;
 }
 
-Value *IRBuilderBPF::CreateGetTid(const Location &loc)
+Value *IRBuilderBPF::CreateGetTid(const Location &loc, bool force_init)
 {
   const auto &pidns = bpftrace_.get_pidns_self_stat();
-  if (pidns && pidns->st_ino != PROC_PID_INIT_INO) {
+  if (!force_init && pidns && pidns->st_ino != PROC_PID_INIT_INO) {
     // Get namespaced target TID when we're running in a namespace
     AllocaInst *res = CreateAllocaBPF(BpfPidnsInfoType(), "bpf_pidns_info");
     CreateGetNsPidTgid(
@@ -110,7 +111,7 @@ Value *IRBuilderBPF::CreateGetTid(const Location &loc)
     return tid;
   }
 
-  // Get global target TID when we're in the initial namespace
+  // Get global target TID otherwise
   Value *pidtgid = CreateGetPidTgid(loc);
   Value *tid = CreateTrunc(pidtgid, getInt32Ty(), "tid");
   return tid;
@@ -128,7 +129,7 @@ AllocaInst *IRBuilderBPF::CreateUSym(Value *val,
   StructType *usym_t = GetStructType("usym_t", elements, false);
   AllocaInst *buf = CreateAllocaBPF(usym_t, "usym");
 
-  Value *pid = CreateGetPid(loc);
+  Value *pid = CreateGetPid(loc, false);
   Value *probe_id_val = Constant::getIntegerValue(getInt32Ty(),
                                                   APInt(32, probe_id));
 
@@ -1132,6 +1133,54 @@ CallInst *IRBuilderBPF::CreateMapDeleteElem(Map &map,
   CreateHelperErrorCond(
       call, libbpf::BPF_FUNC_map_delete_elem, loc, !ret_val_discarded);
 
+  return call;
+}
+
+Value *IRBuilderBPF::CreateForRange(Value *iters,
+                                    Value *callback,
+                                    Value *callback_ctx,
+                                    const Location &loc)
+{
+  // long bpf_loop(__u32 nr_loops, void *callback_fn, void *callback_ctx, u64
+  // flags)
+  //
+  // Return: 0 on success or negative error
+  //
+  // callback is long (*callback_fn)(u64 index, void *ctx);
+  iters = CreateIntCast(iters, getInt32Ty(), true);
+  llvm::Function *parent = GetInsertBlock()->getParent();
+  BasicBlock *is_positive_block = BasicBlock::Create(module_.getContext(),
+                                                     "is_positive",
+                                                     parent);
+  BasicBlock *merge_block = BasicBlock::Create(module_.getContext(),
+                                               "merge",
+                                               parent);
+  Value *is_positive = CreateICmpSGT(iters, getInt32(0), "is_positive_cond");
+  CreateCondBr(is_positive, is_positive_block, merge_block);
+  SetInsertPoint(is_positive_block);
+
+  FunctionType *bpf_loop_type = FunctionType::get(
+      getInt64Ty(),
+      { getInt32Ty(), callback->getType(), getPtrTy(), getInt64Ty() },
+      false);
+  PointerType *bpf_loop_ptr_type = PointerType::get(bpf_loop_type, 0);
+
+  Constant *bpf_loop_func = ConstantExpr::getCast(Instruction::IntToPtr,
+                                                  getInt64(
+                                                      libbpf::BPF_FUNC_loop),
+                                                  bpf_loop_ptr_type);
+  CallInst *call = createCall(
+      bpf_loop_type,
+      bpf_loop_func,
+      { iters,
+        callback,
+        callback_ctx ? CreateIntToPtr(callback_ctx, getPtrTy()) : GetNull(),
+        /*flags=*/getInt64(0) },
+      "bpf_loop");
+  CreateHelperErrorCond(call, libbpf::BPF_FUNC_loop, loc);
+  CreateBr(merge_block);
+
+  SetInsertPoint(merge_block);
   return call;
 }
 

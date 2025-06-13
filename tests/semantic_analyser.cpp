@@ -2,13 +2,13 @@
 #include "ast/ast.h"
 #include "ast/attachpoint_parser.h"
 #include "ast/passes/c_macro_expansion.h"
+#include "ast/passes/clang_parser.h"
 #include "ast/passes/field_analyser.h"
 #include "ast/passes/fold_literals.h"
 #include "ast/passes/macro_expansion.h"
 #include "ast/passes/map_sugar.h"
 #include "ast/passes/printer.h"
 #include "bpftrace.h"
-#include "clang_parser.h"
 #include "driver.h"
 #include "mocks.h"
 #include "gmock/gmock-matchers.h"
@@ -38,7 +38,7 @@ ast::ASTContext test_for_warning(BPFtrace &bpftrace,
                 .add(CreateParsePass())
                 .add(ast::CreateParseAttachpointsPass())
                 .add(ast::CreateFieldAnalyserPass())
-                .add(CreateClangPass())
+                .add(ast::CreateClangParsePass())
                 .add(ast::CreateCMacroExpansionPass())
                 .add(ast::CreateFoldLiteralsPass())
                 .add(ast::CreateMapSugarPass())
@@ -95,7 +95,7 @@ ast::ASTContext test(BPFtrace &bpftrace,
                 .add(ast::CreateMacroExpansionPass())
                 .add(ast::CreateParseAttachpointsPass())
                 .add(ast::CreateFieldAnalyserPass())
-                .add(CreateClangPass())
+                .add(ast::CreateClangParsePass())
                 .add(ast::CreateCMacroExpansionPass())
                 .add(ast::CreateFoldLiteralsPass())
                 .add(ast::CreateMapSugarPass())
@@ -332,6 +332,8 @@ TEST(semantic_analyser, builtin_functions)
   test("kprobe:f { cgroupid(\"/sys/fs/cgroup/unified/mycg\"); }");
   test("kprobe:f { macaddr(0xffff) }");
   test("kprobe:f { nsecs() }");
+  test("kprobe:f { pid() }");
+  test("kprobe:f { tid() }");
 }
 
 TEST(semantic_analyser, undefined_map)
@@ -487,6 +489,8 @@ TEST(semantic_analyser, ternary_expressions)
     { "usym(arg0)", "usym(arg1)" },
     { "cgroup_path(1)", "cgroup_path(2)" },
     { "strerror(1)", "strerror(2)" },
+    { "pid(curr_ns)", "pid(init)" },
+    { "tid(curr_ns)", "tid(init)" },
   };
 
   for (const auto &[left, right] : supported_types) {
@@ -3976,6 +3980,26 @@ BEGIN { $ns = nsecs(xxx); }
 )");
 }
 
+TEST(semantic_analyser, call_pid_tid)
+{
+  test("BEGIN { $i = tid(); }");
+  test("BEGIN { $i = pid(); }");
+  test("BEGIN { $i = tid(curr_ns); }");
+  test("BEGIN { $i = pid(curr_ns); }");
+  test("BEGIN { $i = tid(init); }");
+  test("BEGIN { $i = pid(init); }");
+  test_error("BEGIN { $i = tid(xxx); }", R"(
+stdin:1:14-21: ERROR: Invalid PID namespace mode: xxx (expects: curr_ns or init)
+BEGIN { $i = tid(xxx); }
+             ~~~~~~~
+)");
+  test_error("BEGIN { $i = tid(1); }", R"(
+stdin:1:14-20: ERROR: tid() only supports curr_ns and init as the argument (int provided)
+BEGIN { $i = tid(1); }
+             ~~~~~~
+)");
+}
+
 TEST(semantic_analyser, config)
 {
   test("config = { BPFTRACE_MAX_AST_NODES=1 } BEGIN { $ns = nsecs(); }");
@@ -4459,19 +4483,19 @@ TEST(semantic_analyser, for_loop_invalid_expr)
 {
   // Error location is incorrect: #3063
   test_error("BEGIN { for ($x : $var) { } }", R"(
-stdin:1:19-24: ERROR: syntax error, unexpected variable, expecting map
+stdin:1:19-25: ERROR: syntax error, unexpected ), expecting [ or . or ->
 BEGIN { for ($x : $var) { } }
-                  ~~~~~
+                  ~~~~~~
 )");
   test_error("BEGIN { for ($x : 1+2) { } }", R"(
-stdin:1:19-21: ERROR: syntax error, unexpected integer, expecting map
+stdin:1:19-22: ERROR: syntax error, unexpected +, expecting [ or . or ->
 BEGIN { for ($x : 1+2) { } }
-                  ~~
+                  ~~~
 )");
   test_error("BEGIN { for ($x : \"abc\") { } }", R"(
-stdin:1:19-25: ERROR: syntax error, unexpected string, expecting map
+stdin:1:19-26: ERROR: syntax error, unexpected ), expecting [ or . or ->
 BEGIN { for ($x : "abc") { } }
-                  ~~~~~~
+                  ~~~~~~~
 )");
 }
 
@@ -4493,18 +4517,9 @@ stdin:4:11-15: ERROR: Loop declaration shadows existing variable: $kv
 
 TEST(semantic_analyser, for_loop_control_flow)
 {
-  // Error location is incorrect: #3063
-  test_error("BEGIN { @map[0] = 1; for ($kv : @map) { break; } }", R"(
-stdin:1:42-47: ERROR: 'break' statement is not allowed in a for-loop
-BEGIN { @map[0] = 1; for ($kv : @map) { break; } }
-                                         ~~~~~
-)");
-  // Error location is incorrect: #3063
-  test_error("BEGIN { @map[0] = 1; for ($kv : @map) { continue; } }", R"(
-stdin:1:42-50: ERROR: 'continue' statement is not allowed in a for-loop
-BEGIN { @map[0] = 1; for ($kv : @map) { continue; } }
-                                         ~~~~~~~~
-)");
+  test("BEGIN { @map[0] = 1; for ($kv : @map) { break; } }");
+  test("BEGIN { @map[0] = 1; for ($kv : @map) { continue; } }");
+
   // Error location is incorrect: #3063
   test_error("BEGIN { @map[0] = 1; for ($kv : @map) { return; } }", R"(
 stdin:1:42-48: ERROR: 'return' statement is not allowed in a for-loop
@@ -4533,6 +4548,109 @@ BEGIN { @map[0] = count(); for ($kv : @map) { print($kv); } }
                            ~~~
 )",
              false);
+}
+
+TEST(semantic_analyser, for_range_loop)
+{
+  // These are all technically valid, although they may result in zero
+  // iterations (for example 5..0 will result in no iterations).
+  test(R"(BEGIN { for ($i : 0..5) { printf("%d\n", $i); } })");
+  test(R"(BEGIN { for ($i : 5..0) { printf("%d\n", $i); } })");
+  test(R"(BEGIN { for ($i : (-10)..10) { printf("%d\n", $i); } })");
+  test(R"(BEGIN { $start = 0; for ($i : $start..5) { printf("%d\n", $i); } })");
+  test(R"(BEGIN { $end = 5; for ($i : 0..$end) { printf("%d\n", $i); } })");
+  test(
+      R"(BEGIN { $start = 0; $end = 5; for ($i : $start..$end) { printf("%d\n", $i); } })");
+  test(
+      R"(BEGIN { for ($i : nsecs()..(nsecs()+100)) { printf("%d\n", $i); } })");
+  test(
+      R"(BEGIN { for ($i : sizeof(int8)..sizeof(int64)) { printf("%d\n", $i); } })");
+  test(R"(BEGIN { for ($i : ((int8)0)..((int8)5)) { printf("%d\n", $i); } })");
+}
+
+TEST(semantic_analyser, for_range_nested)
+{
+  test("BEGIN { for ($i : 0..5) { for ($j : 0..$i) { printf(\"%d %d\\n\", "
+       "$i, $j); } } }");
+}
+
+TEST(semantic_analyser, for_range_variable_use)
+{
+  test("BEGIN { for ($i : 0..5) { @[$i] = $i * 2; } }");
+}
+
+TEST(semantic_analyser, for_range_shadowing)
+{
+  test_error(R"(BEGIN { $i = 10; for ($i : 0..5) { printf("%d", $i); } })",
+             R"(
+stdin:1:22-25: ERROR: Loop declaration shadows existing variable: $i
+BEGIN { $i = 10; for ($i : 0..5) { printf("%d", $i); } }
+                     ~~~
+)");
+}
+
+TEST(semantic_analyser, for_range_invalid_types)
+{
+  test_error(R"(BEGIN { for ($i : "str"..5) { printf("%d", $i); } })",
+             R"(
+stdin:1:19-28: ERROR: Loop range requires an integer for the start value
+BEGIN { for ($i : "str"..5) { printf("%d", $i); } }
+                  ~~~~~~~~~
+)");
+
+  test_error(R"(BEGIN { for ($i : 0.."str") { printf("%d", $i); } })",
+             R"(
+stdin:1:19-28: ERROR: Loop range requires an integer for the end value
+BEGIN { for ($i : 0.."str") { printf("%d", $i); } }
+                  ~~~~~~~~~
+)");
+
+  test_error(R"(BEGIN { for ($i : 0.0..5) { printf("%d", $i); } })", R"(
+stdin:1:19-23: ERROR: Can not access index '0' on expression of type 'int64'
+BEGIN { for ($i : 0.0..5) { printf("%d", $i); } }
+                  ~~~~
+stdin:1:19-26: ERROR: Loop range requires an integer for the start value
+BEGIN { for ($i : 0.0..5) { printf("%d", $i); } }
+                  ~~~~~~~
+)");
+}
+
+TEST(semantic_analyser, for_range_control_flow)
+{
+  test("BEGIN { for ($i : 0..5) { break; } }");
+  test("BEGIN { for ($i : 0..5) { continue; } }");
+
+  test_error("BEGIN { for ($i : 0..5) { return; } }", R"(
+stdin:1:28-34: ERROR: 'return' statement is not allowed in a for-loop
+BEGIN { for ($i : 0..5) { return; } }
+                           ~~~~~~
+)");
+}
+
+TEST(semantic_analyser, for_range_out_of_scope)
+{
+  test_error(
+      R"(BEGIN { for ($i : 0..5) { printf("%d", $i); } printf("%d", $i); })",
+      R"(
+stdin:1:61-63: ERROR: Undefined or undeclared variable: $i
+BEGIN { for ($i : 0..5) { printf("%d", $i); } printf("%d", $i); }
+                                                            ~~
+)");
+}
+
+TEST(semantic_analyser, for_range_context_access)
+{
+  test_error("kprobe:f { for ($i : 0..5) { arg0 } }", R"(
+stdin:1:31-35: ERROR: 'arg0' builtin is not allowed in a for-loop
+kprobe:f { for ($i : 0..5) { arg0 } }
+                              ~~~~
+)");
+}
+
+TEST(semantic_analyser, for_range_nested_range)
+{
+  test("BEGIN { for ($i : 0..5) { for ($j : 0..$i) { printf(\"%d %d\\n\", $i, "
+       "$j); } } }");
 }
 
 TEST(semantic_analyser, castable_map_missing_feature)
@@ -4995,16 +5113,16 @@ let @a = percpuarray(1); BEGIN { @a[1] = count(); }
                                  ~~
 )");
   test_error(*bpftrace, "let @a = potato(2); BEGIN { @a[1] = count(); }", R"(
-stdin:1:1-19: ERROR: Invalid bpf map type: potato
+stdin:1:1-20: ERROR: Invalid bpf map type: potato
 let @a = potato(2); BEGIN { @a[1] = count(); }
-~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
 HINT: Valid map types: percpulruhash, percpuarray, percpuhash, lruhash, hash
 )");
 
   test_error(*bpftrace, "let @a = percpuarray(10); BEGIN { @a = count(); }", R"(
-stdin:1:1-25: ERROR: Max entries can only be 1 for map type percpuarray
+stdin:1:1-26: ERROR: Max entries can only be 1 for map type percpuarray
 let @a = percpuarray(10); BEGIN { @a = count(); }
-~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
 }
 

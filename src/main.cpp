@@ -18,6 +18,8 @@
 #include "ast/diagnostic.h"
 #include "ast/helpers.h"
 #include "ast/pass_manager.h"
+#include "ast/passes/clang_build.h"
+#include "ast/passes/clang_parser.h"
 #include "ast/passes/codegen_llvm.h"
 #include "ast/passes/config_analyser.h"
 #include "ast/passes/fold_literals.h"
@@ -38,7 +40,6 @@
 #include "btf.h"
 #include "build_info.h"
 #include "child.h"
-#include "clang_parser.h"
 #include "config.h"
 #include "lockdown.h"
 #include "log.h"
@@ -666,10 +667,7 @@ static ast::ASTContext buildListProgram(const std::string& search)
   ast.root = ast.make_node<ast::Program>("",
                                          nullptr,
                                          ast::ImportList(),
-                                         ast::MapDeclList(),
-                                         ast::MacroList(),
-                                         ast::SubprogList(),
-                                         ast::ProbeList({ probe }),
+                                         ast::RootStatements({ probe }),
                                          location());
   return ast;
 }
@@ -723,10 +721,16 @@ int main(int argc, char* argv[])
   bpftrace.delta_taitime_ = get_delta_taitime();
 
   if (!args.pid_str.empty()) {
-    std::string errmsg;
-    auto maybe_pid = util::parse_pid(args.pid_str, errmsg);
-    if (!maybe_pid.has_value()) {
-      LOG(ERROR) << "Failed to parse pid: " + errmsg;
+    auto maybe_pid = util::to_uint(args.pid_str);
+    if (!maybe_pid) {
+      LOG(ERROR) << "Failed to parse pid: " << maybe_pid.takeError();
+      exit(1);
+    }
+    if (*maybe_pid > 0x400000) {
+      // The actual maximum pid depends on the configuration for the specific
+      // system, i.e. read from `/proc/sys/kernel/pid_max`. We can impose a
+      // basic sanity check here against the nominal maximum for 64-bit systems.
+      LOG(ERROR) << "Pid out of range: " << *maybe_pid;
       exit(1);
     }
     try {
@@ -769,7 +773,7 @@ int main(int argc, char* argv[])
     // To list tracepoints, we construct a synthetic AST and then expand the
     // probe. The raw contents of the program are the initial search provided.
     ast = buildListProgram(is_search_a_type ? FULL_SEARCH : args.search);
-    CDefinitions no_c_defs; // No external C definitions may be used.
+    ast::CDefinitions no_c_defs; // No external C definitions may be used.
 
     // Parse and expand all the attachpoints. We don't need to descend into the
     // actual driver here, since we know that the program is already formed.
@@ -859,7 +863,7 @@ int main(int argc, char* argv[])
   auto flags = extra_flags(bpftrace, args.include_dirs, args.include_files);
 
   if (args.listing) {
-    CDefinitions no_c_defs; // See above.
+    ast::CDefinitions no_c_defs; // See above.
     pm.add(CreateParsePass())
         .put(no_c_defs)
         .add(ast::CreateParseAttachpointsPass(args.listing))
@@ -904,7 +908,9 @@ int main(int argc, char* argv[])
   }
 
   pm.add(ast::CreateLLVMInitPass());
+  pm.add(ast::CreateClangBuildPass());
   pm.add(ast::CreateCompilePass());
+  pm.add(ast::CreateLinkBitcodePass());
   if (bt_debug.contains(DebugStage::Codegen)) {
     pm.add(ast::Pass::create("dump-ir-prefix", [&] {
       std::cout << "LLVM IR before optimization\n";
@@ -988,7 +994,7 @@ int main(int argc, char* argv[])
 
   // Our output requires the parsed C definitions in order to map enum values to
   // the suitable display name.
-  auto& c_definitions = pmresult->get<CDefinitions>();
+  auto& c_definitions = pmresult->get<ast::CDefinitions>();
   std::unique_ptr<Output> output;
   if (args.output_format.empty() || args.output_format == "text") {
     output = std::make_unique<TextOutput>(c_definitions, *os);

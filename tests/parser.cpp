@@ -3,8 +3,8 @@
 
 #include "ast/attachpoint_parser.h"
 #include "ast/passes/c_macro_expansion.h"
+#include "ast/passes/clang_parser.h"
 #include "ast/passes/printer.h"
-#include "clang_parser.h"
 #include "driver.h"
 #include "gtest/gtest.h"
 
@@ -49,7 +49,7 @@ void test_macro_parse_failure(BPFtrace &bpftrace,
                 .put(ast)
                 .put(bpftrace)
                 .add(CreateParsePass())
-                .add(CreateClangPass())
+                .add(ast::CreateClangParsePass())
                 .add(ast::CreateCMacroExpansionPass())
                 .run();
   ASSERT_TRUE(bool(ok));
@@ -366,13 +366,15 @@ uprobe:/bin/bash:$a { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
 
-  test_parse_failure(bpftrace, R"(uprobe:$999999999999999999999999 { 1 })", R"(
-stdin:1:1-33: ERROR: positional param index 999999999999999999999999 is out of integer range. Max int: 9223372036854775807
-uprobe:$999999999999999999999999 { 1 }
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-stdin:1:1-39: ERROR: No attach points for probe
-uprobe:$999999999999999999999999 { 1 }
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  test_parse_failure(bpftrace,
+                     R"(uprobe:f:$999999999999999999999999 { 1 })",
+                     R"(
+stdin:1:1-35: ERROR: positional parameter is not valid: overflow error, maximum value is 18446744073709551615: 999999999999999999999999
+uprobe:f:$999999999999999999999999 { 1 }
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+stdin:1:1-41: ERROR: No attach points for probe
+uprobe:f:$999999999999999999999999 { 1 }
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
 }
 
@@ -1429,8 +1431,7 @@ TEST(Parser, profile_probe)
        "  int: 1\n");
 
   test_parse_failure("profile:ms:nan { 1 }", R"(
-stdin:1:1-15: ERROR: stoull
-Invalid rate of profile probe
+stdin:1:1-15: ERROR: Invalid rate of profile probe: invalid integer: nan
 profile:ms:nan { 1 }
 ~~~~~~~~~~~~~~
 )");
@@ -1448,8 +1449,7 @@ profile { 1 }
 )");
 
   test_parse_failure("profile:s:1b { 1 }", R"(
-stdin:1:1-13: ERROR: Found trailing non-numeric characters
-Invalid rate of profile probe
+stdin:1:1-13: ERROR: Invalid rate of profile probe: invalid trailing bytes: 1b
 profile:s:1b { 1 }
 ~~~~~~~~~~~~
 )");
@@ -1473,8 +1473,7 @@ TEST(Parser, interval_probe)
        "  int: 1\n");
 
   test_parse_failure("interval:s:1b { 1 }", R"(
-stdin:1:1-14: ERROR: Found trailing non-numeric characters
-Invalid rate of interval probe
+stdin:1:1-14: ERROR: Invalid rate of interval probe: invalid trailing bytes: 1b
 interval:s:1b { 1 }
 ~~~~~~~~~~~~~
 )");
@@ -1498,8 +1497,7 @@ TEST(Parser, software_probe)
        "  int: 1\n");
 
   test_parse_failure("software:faults:1b { 1 }", R"(
-stdin:1:1-19: ERROR: Found trailing non-numeric characters
-Invalid count for software probe
+stdin:1:1-19: ERROR: Invalid count for software probe: invalid trailing bytes: 1b
 software:faults:1b { 1 }
 ~~~~~~~~~~~~~~~~~~
 )");
@@ -1523,8 +1521,7 @@ TEST(Parser, hardware_probe)
        "  int: 1\n");
 
   test_parse_failure("hardware:cache-references:1b { 1 }", R"(
-stdin:1:1-29: ERROR: Found trailing non-numeric characters
-Invalid count for hardware probe
+stdin:1:1-29: ERROR: Invalid count for hardware probe: invalid trailing bytes: 1b
 hardware:cache-references:1b { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
@@ -1538,35 +1535,31 @@ TEST(Parser, watchpoint_probe)
        "  int: 1\n");
 
   test_parse_failure("watchpoint:1b:8:w { 1 }", R"(
-stdin:1:1-18: ERROR: Found trailing non-numeric characters
-Invalid function/address argument
+stdin:1:1-18: ERROR: Invalid function/address argument: invalid trailing bytes: 1b
 watchpoint:1b:8:w { 1 }
 ~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("watchpoint:1:8a:w { 1 }", R"(
-stdin:1:1-18: ERROR: Found trailing non-numeric characters
-Invalid length argument
+stdin:1:1-18: ERROR: Invalid length argument: invalid trailing bytes: 8a
 watchpoint:1:8a:w { 1 }
 ~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("watchpoint:1b:8a:w { 1 }", R"(
-stdin:1:1-19: ERROR: Found trailing non-numeric characters
-Invalid function/address argument
+stdin:1:1-19: ERROR: Invalid function/address argument: invalid trailing bytes: 1b
 watchpoint:1b:8a:w { 1 }
 ~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("watchpoint:+arg0:8:rw { 1 }", R"(
-stdin:1:1-22: ERROR: Invalid function/address argument
+stdin:1:1-22: ERROR: Invalid function/address argument: +arg0
 watchpoint:+arg0:8:rw { 1 }
 ~~~~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("watchpoint:func1:8:rw { 1 }", R"(
-stdin:1:1-22: ERROR: stoull
-Invalid function/address argument
+stdin:1:1-22: ERROR: Invalid function/address argument: invalid integer: func1
 watchpoint:func1:8:rw { 1 }
 ~~~~~~~~~~~~~~~~~~~~~
 )");
@@ -1580,35 +1573,31 @@ TEST(Parser, asyncwatchpoint_probe)
        "  int: 1\n");
 
   test_parse_failure("asyncwatchpoint:1b:8:w { 1 }", R"(
-stdin:1:1-23: ERROR: Found trailing non-numeric characters
-Invalid function/address argument
+stdin:1:1-23: ERROR: Invalid function/address argument: invalid trailing bytes: 1b
 asyncwatchpoint:1b:8:w { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("asyncwatchpoint:1:8a:w { 1 }", R"(
-stdin:1:1-23: ERROR: Found trailing non-numeric characters
-Invalid length argument
+stdin:1:1-23: ERROR: Invalid length argument: invalid trailing bytes: 8a
 asyncwatchpoint:1:8a:w { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("asyncwatchpoint:1b:8a:w { 1 }", R"(
-stdin:1:1-24: ERROR: Found trailing non-numeric characters
-Invalid function/address argument
+stdin:1:1-24: ERROR: Invalid function/address argument: invalid trailing bytes: 1b
 asyncwatchpoint:1b:8a:w { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("asyncwatchpoint:+arg0:8:rw { 1 }", R"(
-stdin:1:1-27: ERROR: Invalid function/address argument
+stdin:1:1-27: ERROR: Invalid function/address argument: +arg0
 asyncwatchpoint:+arg0:8:rw { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
 
   test_parse_failure("asyncwatchpoint:func1:8:rw { 1 }", R"(
-stdin:1:1-27: ERROR: stoull
-Invalid function/address argument
+stdin:1:1-27: ERROR: Invalid function/address argument: invalid integer: func1
 asyncwatchpoint:func1:8:rw { 1 }
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 )");
@@ -2479,20 +2468,20 @@ k:f { print(5e-9); }
       ~~~~~~~~
 )");
 
-  test_parse_failure("k:f { print(1e17); }", R"(
-stdin:1:7-17: ERROR: Exponent will overflow integer range: 17
-k:f { print(1e17); }
+  test_parse_failure("k:f { print(1e21); }", R"(
+stdin:1:7-17: ERROR: overflow error, maximum value is 18446744073709551615: 1e21
+k:f { print(1e21); }
       ~~~~~~~~~~
 )");
 
   test_parse_failure("k:f { print(12e4); }", R"(
-stdin:1:7-17: ERROR: Coefficient part of scientific literal must be in range (0,9), got: 12
+stdin:1:7-17: ERROR: coefficient part of scientific literal must be 1-9: 12e4
 k:f { print(12e4); }
       ~~~~~~~~~~
 )");
 
   test_parse_failure("k:f { print(1_1e100); }", R"(
-stdin:1:7-20: ERROR: Coefficient part of scientific literal must be in range (0,9), got: 11
+stdin:1:7-20: ERROR: coefficient part of scientific literal must be 1-9: 1_1e100
 k:f { print(1_1e100); }
       ~~~~~~~~~~~~~
 )");
@@ -2770,10 +2759,16 @@ TEST(Parser, keywords_as_identifiers)
   }
 }
 
-TEST(Parser, subprog_probe_mixed)
+TEST(Parser, prog_body_items)
 {
-  test("i:s:1 {} fn f1(): void {} i:s:1 {} fn f2(): void {}",
+  // This includes probes, subprogs, macros, and map declarations.
+  // Note: macros are not printed in the AST.
+  test("i:s:1 {} macro add_one() {} fn f1(): void {} let @a = hash(5); i:s:1 "
+       "{} fn f2(): void {} macro add_two() {}",
        "Program\n"
+       " map decl: @a\n"
+       "  bpf type: hash\n"
+       "  max entries: 5\n"
        " subprog: f1 :: [void]\n"
        " subprog: f2 :: [void]\n"
        " interval:s:1\n"
@@ -2928,6 +2923,57 @@ BEGIN { for ($kv : @map) print($kv); }
 stdin:1:13-17: ERROR: syntax error, unexpected map, expecting variable
 BEGIN { for (@kv : @map) { } }
             ~~~~
+)");
+}
+
+TEST(Parser, for_range)
+{
+  test("BEGIN { for ($i : 0..10) { print($i) } }", R"(
+Program
+ BEGIN
+  for
+   decl
+    variable: $i
+    start
+     int: 0
+    end
+     int: 10
+   stmts
+    call: print
+     variable: $i
+)");
+
+  // Binary expressions must be wrapped.
+  test_parse_failure("BEGIN { for ($i : 1+1..10) { print($i) } }", R"(
+stdin:1:19-22: ERROR: syntax error, unexpected +, expecting [ or . or ->
+BEGIN { for ($i : 1+1..10) { print($i) } }
+                  ~~~
+)");
+  test_parse_failure("BEGIN { for ($i : 0..1+1) { print($i) } }", R"(
+stdin:1:19-25: ERROR: syntax error, unexpected +, expecting )
+BEGIN { for ($i : 0..1+1) { print($i) } }
+                  ~~~~~~
+)");
+
+  // Invalid range operator.
+  test_parse_failure("BEGIN { for ($i : 0...10) { print($i) } }", R"(
+stdin:1:19-24: ERROR: syntax error, unexpected .
+BEGIN { for ($i : 0...10) { print($i) } }
+                  ~~~~~
+)");
+
+  // Missing end range.
+  test_parse_failure("BEGIN { for ($i : 0..) { print($i) } }", R"(
+stdin:1:19-24: ERROR: syntax error, unexpected )
+BEGIN { for ($i : 0..) { print($i) } }
+                  ~~~~~
+)");
+
+  // Missing start range.
+  test_parse_failure("BEGIN { for ($i : ..10) { print($i) } }", R"(
+stdin:1:19-21: ERROR: syntax error, unexpected .
+BEGIN { for ($i : ..10) { print($i) } }
+                  ~~
 )");
 }
 

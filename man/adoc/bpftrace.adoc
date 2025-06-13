@@ -457,7 +457,7 @@ Strings support the following escape sequences:
 
 ==== For
 
-With Linux 5.13 and later, `for` loops can be used to iterate over elements in a map.
+With Linux 5.13 and later, `for` loops can be used to iterate over elements in a map, or over a range of integers, provided as two unary expressions separated by `..`.
 
 ----
 for ($kv : @map) {
@@ -465,7 +465,15 @@ for ($kv : @map) {
 }
 ----
 
-The variable declared in the `for` loop will be initialised on each iteration with a tuple containing a key and a value from the map, i.e. `$kv = (key, value)`.
+----
+for ($i : start..end) {
+  block;
+}
+----
+
+The variable declared in the `for` loop will be initialised on each iteration.
+
+If the iteration is over a map, the value will be a tuple containing a key and a value from the map, i.e. `$kv = (key, value)`:
 
 ----
 @map[10] = 20;
@@ -475,7 +483,7 @@ for ($kv : @map) {
 }
 ----
 
-When a map has multiple keys, the loop variable will be initialised with nested tuple of the form: `((key1, key2, ...), value)`
+If a map has multiple keys, the loop variable will be initialised with nested tuple of the form: `((key1, key2, ...), value)`:
 
 ----
 @map[10,11] = 20;
@@ -486,30 +494,48 @@ for ($kv : @map) {
 }
 ----
 
+If an integer range is provided, the value will be an integer value for each element in the range, inclusive of the start value and exclusive of the end value:
+
+----
+for ($cpu : 0..ncpus) {
+  print($cpu); // current value in range
+}
+----
+
+Note that you cannot adjust the range itself after the loop has started.
+The `for` start and end values are evaluated once, not on each loop iteration.
+For example, the following will print `0` through `9`:
+
+----
+$a = 10;
+for ($i : 0..$a) {
+  print($i);
+  $a--;
+}
+----
+
+Both `for` loops support the following control flow statements:
+
+[cols="~,~"]
+|===
+
+| continue
+| skip processing of the rest of the block and proceed to the next iteration
+
+| break
+| terminate the loop
+
+|===
+
 ==== While
 
-Since kernel 5.3 BPF supports loops as long as the verifier can prove they're bounded and fit within the instruction limit.
-
-In bpftrace, loops are available through the `while` statement.
+Since kernel 5.3 BPF supports `while` loops as long as the verifier can prove they're bounded and fit within the instruction limit.
 
 ----
 while (condition) {
   block;
 }
 ----
-
-Within a while-loop the following control flow statements can be used:
-
-[cols="~,~"]
-|===
-
-| continue
-| skip processing of the rest of the block and jump back to the evaluation of the conditional
-
-| break
-| Terminate the loop
-
-|===
 
 ----
 interval:s:1 {
@@ -524,6 +550,19 @@ interval:s:1 {
   printf("\n");
 }
 ----
+
+The `while` loop supports the following control flow statements:
+
+[cols="~,~"]
+|===
+
+| continue
+| skip processing of the rest of the block and return to the conditional
+
+| break
+| terminate the loop
+
+|===
 
 ==== Unroll
 
@@ -1840,6 +1879,10 @@ int main()
 # bpftrace -e 'watchpoint:increment+arg1:4:w { printf("hit!\n"); exit() }' -c ./wpfunc
 ----
 
+Note that threads are monitored, but only for threads created after watchpoint attachment.
+The is a limitation from the kernel.
+Additionally, because of how watchpoints are implemented in bpftrace the specified function must be called at least once in the main thread in order to observe future calls to this function in child threads.
+
 == Builtins
 
 Builtins are special variables built into the language.
@@ -1945,8 +1988,8 @@ For string arguments in an action block use the `str()` call to retrieve the val
 | `pid`
 | uint32
 | 4.2
-| get_current_pid_tgid
-| Process ID of the current thread (aka thread group ID), as seen from the init namespace
+| get_current_pid_tgid / get_ns_current_pid_tgid
+| Process ID of the current thread (aka thread group ID), as seen from the PID namespace of bpftrace
 
 | `probe`
 | string
@@ -1975,8 +2018,8 @@ For string arguments in an action block use the `str()` call to retrieve the val
 | `tid`
 | uint32
 | 4.2
-| get_current_pid_tgid
-| Thread ID of the current thread, as seen from the init namespace
+| get_current_pid_tgid / get_ns_current_pid_tgid
+| Thread ID of the current thread, as seen from the PID namespace of bpftrace
 
 | `uid`
 | uint64
@@ -2097,6 +2140,14 @@ Tracing block I/O sizes > 0 bytes
 | <<functions-cat, `cat`>>
 | Print file content
 | Async
+
+| <<functions-pid, `pid`>>
+| Process ID of the current thread
+| Sync
+
+| <<functions-tid, `tid`>>
+| Thread ID of the current thread
+| Sync
 
 | <<functions-cgroupid, `cgroupid`>>
 | Resolve cgroup ID
@@ -2306,6 +2357,28 @@ tracepoint:syscalls:sys_enter_execve {
 55f683edf000-55f683ee2000 rw-p 00021000 08:01 1843399                    /usr/bin/ls
 55f683ee2000-55f683ee3000 rw-p 00000000 00:00 0
 ----
+
+[#functions-pid]
+=== pid
+.variants
+* `uint32 pid([curr_ns|init])`
+
+Returns the process ID of the current thread.
+Defaults to `curr_ns`.
+
+- `pid(curr_ns)` - The process ID as seen from the PID namespace of bpftrace.
+- `pid(init)` - The process ID as seen from the initial PID namespace.
+
+[#functions-tid]
+=== pid
+.variants
+* `uint32 tid([curr_ns|init])`
+
+Returns the thread ID of the current thread.
+Defaults to `curr_ns`.
+
+- `tid(curr_ns)` - The thread ID as seen from the PID namespace of bpftrace.
+- `tid(init)` - The thread ID as seen from the initial PID namespace.
 
 [#functions-cgroupid]
 === cgroupid
@@ -3834,9 +3907,7 @@ The tradeoff is that bpftrace will use more memory.
 
 ==== show_debug_info
 
-Default: 1
-
-If enabled, when printing ustack and kstack symbols bpftrace will also show (if debug info is available) symbol file and line ('bpftrace' stack mode) and a label if the function was inlined ('bpftrace' and 'perf' stack modes).
+This is only available if the link:https://github.com/libbpf/blazesym[Blazesym] library is available at build time. If it is available this defaults to 1, meaning that when printing ustack and kstack symbols bpftrace will also show (if debug info is available) symbol file and line ('bpftrace' stack mode) and a label if the function was inlined ('bpftrace' and 'perf' stack modes).
 There might be a performance difference when symbolicating, which is the only reason to disable this.
 
 ==== stack_mode

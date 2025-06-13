@@ -1,7 +1,7 @@
 ; ModuleID = 'bpftrace'
 source_filename = "bpftrace"
 target datalayout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128"
-target triple = "bpf-pc-linux"
+target triple = "bpf"
 
 %"struct map_t" = type { ptr, ptr, ptr, ptr }
 %"struct map_t.0" = type { ptr, ptr, ptr, ptr }
@@ -267,9 +267,9 @@ attributes #3 = { nocallback nofree nounwind willreturn memory(argmem: write) }
 !37 = !DISubrange(count: 131072, lowerBound: 0)
 !38 = !DIDerivedType(tag: DW_TAG_member, name: "key", scope: !2, file: !2, baseType: !39, size: 64, offset: 128)
 !39 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !40, size: 64)
-!40 = !DICompositeType(tag: DW_TAG_array_type, baseType: !4, size: 96, elements: !41)
+!40 = !DICompositeType(tag: DW_TAG_array_type, baseType: !4, size: 128, elements: !41)
 !41 = !{!42}
-!42 = !DISubrange(count: 12, lowerBound: 0)
+!42 = !DISubrange(count: 16, lowerBound: 0)
 !43 = !DIDerivedType(tag: DW_TAG_member, name: "value", scope: !2, file: !2, baseType: !44, size: 64, offset: 192)
 !44 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !45, size: 64)
 !45 = !DICompositeType(tag: DW_TAG_array_type, baseType: !20, size: 8128, elements: !46)

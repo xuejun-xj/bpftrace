@@ -51,6 +51,12 @@ and this project adheres to
   - [#4129](https://github.com/bpftrace/bpftrace/pull/4129)
 - Warn on discarded return values for specific builtin functions
   - [#4191](https://github.com/bpftrace/bpftrace/pull/4191)
+- For loops now support `..` ranges
+  - [#4126](https://github.com/bpftrace/bpftrace/pull/4126)
+- For loops now support `break` and `continue`
+  - [#4250](https://github.com/bpftrace/bpftrace/pull/4250)
+- Add `pid` and `tid` functions for choosing between the initial or the current namespace
+  - [#4254](https://github.com/bpftrace/bpftrace/pull/4254)
 #### Changed
 - `-p` CLI flag now applies to all probes (except BEGIN/END)
   - [#3800](https://github.com/bpftrace/bpftrace/pull/3800)
@@ -91,9 +97,17 @@ and this project adheres to
   - [#4139](https://github.com/bpftrace/bpftrace/pull/4139)
 - Fix incorrect reporting of attached count for multi probes
   - [#4194](https://github.com/bpftrace/bpftrace/pull/4194)
+- Attach watchpoint probes to newly created threads
+  - [#4239](https://github.com/bpftrace/bpftrace/pull/4239)
+- Fix reading of __data_loc tracepoint arguments
+  - [#4238](https://github.com/bpftrace/bpftrace/pull/4238)
+- Fix kstack/ustack on big-endian systems
+  - [#4244](https://github.com/bpftrace/bpftrace/pull/4244)
 #### Security
 #### Docs
 #### Tools
+- killsnoop.bt: display signal name instead of value
+  - [#4234](https://github.com/bpftrace/bpftrace/pull/4234)
 - killsnoop.bt: support tkill() and tgkill()
   - [#4190](https://github.com/bpftrace/bpftrace/pull/4190)
 - Remove tools example usage txt files and move info to comments
